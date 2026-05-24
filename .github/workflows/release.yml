@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: ctoken-aarch64-apple-darwin.tar.gz
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: deb
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: ctoken-x86_64-windows.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # ── macOS: package as tar.gz ───────────────────────────────────────────
+      - name: Package (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../${{ matrix.artifact }} ctoken
+          cd ../../..
+
+      - name: Upload (macOS)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctoken-aarch64-apple-darwin
+          path: ctoken-aarch64-apple-darwin.tar.gz
+
+      # ── Linux: build .deb with cargo-deb ─────────────────────────────────
+      - name: Install cargo-deb
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install cargo-deb
+
+      - name: Build .deb
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo deb --target ${{ matrix.target }} --no-build
+
+      - name: Locate .deb
+        if: matrix.os == 'ubuntu-latest'
+        id: deb_path
+        run: |
+          DEB=$(ls target/${{ matrix.target }}/debian/*.deb | head -1)
+          echo "path=$DEB" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename $DEB)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctoken-linux-deb
+          path: ${{ steps.deb_path.outputs.path }}
+
+      # ── Windows: package as zip ───────────────────────────────────────────
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path ctoken.exe -DestinationPath ../../../${{ matrix.artifact }}
+          cd ../../..
+        shell: pwsh
+
+      - name: Upload (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctoken-x86_64-windows
+          path: ctoken-x86_64-windows.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      macos_sha256: ${{ steps.sha.outputs.macos_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact directory
+        run: |
+          find artifacts -type f | while read f; do
+            cp "$f" .
+          done
+          ls -la *.tar.gz *.deb *.zip 2>/dev/null || true
+
+      - name: Compute macOS SHA256
+        id: sha
+        run: |
+          SHA=$(sha256sum ctoken-aarch64-apple-darwin.tar.gz | awk '{print $1}')
+          echo "macos_sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ctoken v${{ steps.version.outputs.version }}
+          files: |
+            ctoken-aarch64-apple-darwin.tar.gz
+            *.deb
+            ctoken-x86_64-windows.zip
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update formula in tap repo
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256: ${{ needs.release.outputs.macos_sha256 }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/RimantasZ/homebrew-ctoken.git" tap
+          mkdir -p tap/Formula
+
+          cat > tap/Formula/ctoken.rb << FORMULA
+          class Ctoken < Formula
+            desc "Count tokens in project files, like cloc but for LLM context estimation"
+            homepage "https://github.com/RimantasZ/ctoken"
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/RimantasZ/ctoken/releases/download/v${VERSION}/ctoken-aarch64-apple-darwin.tar.gz"
+                sha256 "${SHA256}"
+              end
+            end
+
+            def install
+              bin.install "ctoken"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/ctoken --version")
+            end
+          end
+          FORMULA
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ctoken.rb
+          git commit -m "Update ctoken to v${VERSION}"
+          git push
