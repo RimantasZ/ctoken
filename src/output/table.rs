@@ -1,13 +1,62 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use comfy_table::{Cell, CellAlignment, Table};
-
 use crate::format::fmt_thousands;
 use crate::tokenize_files::{FileResult, Outcome};
 
-fn right(s: impl ToString) -> Cell {
-    Cell::new(s).set_alignment(CellAlignment::Right)
+/// Print a cloc-style table: header, dash separator, data rows, dash separator, total row.
+/// `right_cols` is a bitmask of which column indices are right-aligned (0 = left).
+fn print_table(headers: &[&str], right_cols: &[bool], rows: &[Vec<String>], total: Vec<String>) {
+    // compute column widths as max of header, all data cells, and total cell
+    let ncols = headers.len();
+    let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+    for row in rows.iter().chain(std::iter::once(&total)) {
+        for (i, cell) in row.iter().enumerate() {
+            if i < ncols {
+                widths[i] = widths[i].max(cell.len());
+            }
+        }
+    }
+
+    let sep_width: usize = widths.iter().sum::<usize>() + widths.len().saturating_sub(1) * 2;
+    let sep = "-".repeat(sep_width);
+
+    let fmt_row = |row: &[String]| -> String {
+        row.iter()
+            .enumerate()
+            .map(|(i, cell)| {
+                let w = widths[i];
+                if right_cols.get(i).copied().unwrap_or(false) {
+                    format!("{:>w$}", cell)
+                } else {
+                    format!("{:<w$}", cell)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("  ")
+    };
+
+    let header_str: String = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let w = widths[i];
+            if right_cols.get(i).copied().unwrap_or(false) {
+                format!("{:>w$}", h)
+            } else {
+                format!("{:<w$}", h)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("  ");
+
+    println!("{header_str}");
+    println!("{sep}");
+    for row in rows {
+        println!("{}", fmt_row(row));
+    }
+    println!("{sep}");
+    println!("{}", fmt_row(&total));
 }
 
 /// Default mode: group by immediate subdirectory under root.
@@ -23,7 +72,6 @@ pub fn print_default(_root: &Path, results: &[FileResult]) {
             Some(comp) => {
                 let comp_path = PathBuf::from(comp.as_os_str());
                 if comp_path == r.entry.rel {
-                    // file directly in root
                     ".".to_string()
                 } else {
                     comp.as_os_str().to_string_lossy().into_owned()
@@ -34,10 +82,6 @@ pub fn print_default(_root: &Path, results: &[FileResult]) {
         *groups.entry(key).or_default() += n;
     }
 
-    let mut table = Table::new();
-    table.set_header(vec!["DIRECTORY", "TOKENS"]);
-
-    // "." first, then alphabetical
     let mut keys: Vec<_> = groups.keys().cloned().collect();
     keys.sort_by(|a, b| {
         if a == "." {
@@ -50,14 +94,21 @@ pub fn print_default(_root: &Path, results: &[FileResult]) {
     });
 
     let mut total = 0usize;
-    for key in &keys {
-        let n = groups[key];
-        total += n;
-        table.add_row(vec![Cell::new(key), right(fmt_thousands(n))]);
-    }
-    table.add_row(vec![Cell::new("TOTAL"), right(fmt_thousands(total))]);
+    let rows: Vec<Vec<String>> = keys
+        .iter()
+        .map(|key| {
+            let n = groups[key];
+            total += n;
+            vec![key.clone(), fmt_thousands(n)]
+        })
+        .collect();
 
-    println!("{table}");
+    print_table(
+        &["DIRECTORY", "TOKENS"],
+        &[false, true],
+        &rows,
+        vec!["TOTAL".into(), fmt_thousands(total)],
+    );
 }
 
 /// -t mode: group by file extension across whole tree.
@@ -87,31 +138,34 @@ pub fn print_by_type(results: &[FileResult]) {
         stats.tokens += n;
     }
 
-    // sort by tokens desc
     let mut entries: Vec<_> = groups.into_iter().collect();
     entries.sort_by_key(|b| std::cmp::Reverse(b.1.tokens));
 
-    let mut table = Table::new();
-    table.set_header(vec!["TYPE", "FILES", "TOKENS"]);
-
     let mut total_files = 0usize;
     let mut total_tokens = 0usize;
-    for (ext, stats) in &entries {
-        total_files += stats.files;
-        total_tokens += stats.tokens;
-        table.add_row(vec![
-            Cell::new(ext),
-            right(fmt_thousands(stats.files)),
-            right(fmt_thousands(stats.tokens)),
-        ]);
-    }
-    table.add_row(vec![
-        Cell::new("TOTAL"),
-        right(fmt_thousands(total_files)),
-        right(fmt_thousands(total_tokens)),
-    ]);
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|(ext, stats)| {
+            total_files += stats.files;
+            total_tokens += stats.tokens;
+            vec![
+                ext.clone(),
+                fmt_thousands(stats.files),
+                fmt_thousands(stats.tokens),
+            ]
+        })
+        .collect();
 
-    println!("{table}");
+    print_table(
+        &["TYPE", "FILES", "TOKENS"],
+        &[false, true, true],
+        &rows,
+        vec![
+            "TOTAL".into(),
+            fmt_thousands(total_files),
+            fmt_thousands(total_tokens),
+        ],
+    );
 }
 
 /// Per-directory sub-table for recursive mode (files only, by extension).
@@ -145,25 +199,25 @@ pub fn print_recursive_dir(dir_label: &str, dir_results: &[&FileResult]) {
 
     println!("=== {} ===", dir_label);
 
-    let mut table = Table::new();
-    table.set_header(vec!["TYPE", "FILES", "TOKENS"]);
-
     let mut subtotal = 0usize;
-    for (ext, stats) in &entries {
-        subtotal += stats.tokens;
-        table.add_row(vec![
-            Cell::new(ext),
-            right(fmt_thousands(stats.files)),
-            right(fmt_thousands(stats.tokens)),
-        ]);
-    }
-    table.add_row(vec![
-        Cell::new("SUBTOTAL"),
-        Cell::new(""),
-        right(fmt_thousands(subtotal)),
-    ]);
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|(ext, stats)| {
+            subtotal += stats.tokens;
+            vec![
+                ext.clone(),
+                fmt_thousands(stats.files),
+                fmt_thousands(stats.tokens),
+            ]
+        })
+        .collect();
 
-    println!("{table}");
+    print_table(
+        &["TYPE", "FILES", "TOKENS"],
+        &[false, true, true],
+        &rows,
+        vec!["SUBTOTAL".into(), String::new(), fmt_thousands(subtotal)],
+    );
 }
 
 /// Child directory rows for --recursive-with-dir mode.
@@ -171,12 +225,18 @@ pub fn print_child_dir_rows(child_dirs: &[(String, usize)]) {
     if child_dirs.is_empty() {
         return;
     }
-    let mut table = Table::new();
-    table.set_header(vec!["SUBDIRECTORY", "TOKENS"]);
-    for (name, tokens) in child_dirs {
-        table.add_row(vec![Cell::new(name), right(fmt_thousands(*tokens))]);
-    }
-    println!("{table}");
+    let rows: Vec<Vec<String>> = child_dirs
+        .iter()
+        .map(|(name, tokens)| vec![name.clone(), fmt_thousands(*tokens)])
+        .collect();
+    let total_tokens: usize = child_dirs.iter().map(|(_, t)| t).sum();
+
+    print_table(
+        &["SUBDIRECTORY", "TOKENS"],
+        &[false, true],
+        &rows,
+        vec!["TOTAL".into(), fmt_thousands(total_tokens)],
+    );
 }
 
 #[cfg(test)]
@@ -204,7 +264,6 @@ mod tests {
             make_result("src/lib.rs", 200),
             make_result("README.md", 50),
         ];
-        // just verify it doesn't panic
         print_default(Path::new("/root"), &results);
     }
 

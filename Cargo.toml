@@ -24,7 +24,6 @@ rayon = "1"
 anyhow = "1"
 thiserror = "1"
 dirs = "5"
-comfy-table = "7"
 
 [dev-dependencies]
 assert_cmd = "2"
