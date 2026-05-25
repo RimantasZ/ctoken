@@ -21,8 +21,8 @@ pub struct Cli {
     #[arg(short = 'm', long = "match", value_name = "GLOB", action = clap::ArgAction::Append)]
     pub match_globs: Vec<String>,
 
-    /// Use named profile from ~/.config/ctoken/profiles.toml
-    #[arg(short = 'p', long, value_name = "NAME")]
+    /// Use named profile from ~/.config/ctoken/profiles.toml; omit NAME to list available profiles
+    #[arg(short = 'p', long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
     pub profile: Option<String>,
 
     /// Rewrite built-in profile entries in profiles.toml (interactive)
@@ -50,7 +50,7 @@ pub struct Cli {
     pub json: bool,
 
     /// Tiktoken encoding to use
-    #[arg(long, default_value = "cl100k-base", value_name = "NAME")]
+    #[arg(long, default_value = "o200k-base", value_name = "NAME")]
     pub encoding: EncodingArg,
 }
 

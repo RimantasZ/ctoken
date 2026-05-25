@@ -57,6 +57,12 @@ fn run() -> Result<()> {
 
     // Resolve the profile if requested
     let profile = match &cli.profile {
+        Some(name) if name.is_empty() => {
+            // -p with no argument: list available profiles and exit
+            let names: Vec<_> = profile_file.profiles.keys().cloned().collect();
+            println!("Available profiles: {}", names.join(", "));
+            return Ok(());
+        }
         Some(name) => {
             let p = profile_file.profiles.get(name).ok_or_else(|| {
                 let available: Vec<_> = profile_file.profiles.keys().cloned().collect();
