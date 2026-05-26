@@ -119,8 +119,10 @@ pub fn config_path() -> Result<PathBuf> {
         return Ok(PathBuf::from(dir).join("profiles.toml"));
     }
 
-    let base =
-        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("cannot determine config directory"))?;
+    let base = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
+        .join(".config");
+
     Ok(base.join("ctoken").join("profiles.toml"))
 }
 
