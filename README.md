@@ -6,9 +6,9 @@ ctoken is a cli utility to count tokens in a file or a directory and its content
 
 When developing AI agends or LLM based apps in general, sometimes it is interesting to know how much a certain data will impact context window - that is how much tokens a certain file or set of files will translate to. 
 
-There are various options - estimate it by size or word count, use various calculators on the web, or call on of LLM providers APIs - but all of them become inconvenient when this needs to be done repeadedly or on larger set of files. 
+There are various options - estimate it by size or word count, use various calculators on the web, or call one of LLM providers APIs - but all of them become inconvenient when this needs to be done repeadedly or on larger set of files. 
 
-Thats where ctoken utilit comes in - type `ctoken <dirname>` and you get summary of token count of its contents:
+Thats where ctoken utility comes in - type `ctoken <dirname>` and you get token count summary of its contents:
 
 ```
 DIRECTORY  TOKENS
@@ -21,7 +21,7 @@ tests       3,092
 -----------------
 TOTAL      43,756
 ```
-Also suppots grouping by file type, filtering by pattern or customisable profiles, etc - see [Flags](#flags) for details.
+It also supports grouping by file type, filtering by pattern or customisable profiles, etc - see [Flags](#flags) for details.
 
 
 ## Install

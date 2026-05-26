@@ -102,36 +102,32 @@ fn profile_rust_excludes_python() {
 
 #[test]
 fn gitignore_off_includes_log() {
-    let out_off = cmd()
-        .arg(fixture("rust_project"))
-        .arg("-g")
-        .arg("off")
-        .arg("-s")
-        .output()
-        .unwrap();
-    assert!(out_off.status.success());
-    let n_off: usize = String::from_utf8_lossy(&out_off.stdout)
-        .trim()
-        .parse()
-        .unwrap();
+    // Use a self-contained tempdir so we don't depend on fixture files that git
+    // itself would refuse to track (they'd match the fixture's own .gitignore).
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+
+    // Minimal .git dir so the ignore crate applies .gitignore rules.
+    std::fs::create_dir(root.join(".git")).unwrap();
+    std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+    std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+    std::fs::write(root.join("ignored.log"), "this log is gitignored\n").unwrap();
 
     let out_on = cmd()
-        .arg(fixture("rust_project"))
-        .arg("-g")
-        .arg("on")
-        .arg("-s")
-        .output()
-        .unwrap();
+        .arg(root)
+        .arg("-g").arg("on").arg("-s")
+        .output().unwrap();
     assert!(out_on.status.success());
-    let n_on: usize = String::from_utf8_lossy(&out_on.stdout)
-        .trim()
-        .parse()
-        .unwrap();
+    let n_on: usize = String::from_utf8_lossy(&out_on.stdout).trim().parse().unwrap();
 
-    assert!(
-        n_off > n_on,
-        "gitignore off should count more tokens (includes ignored.log and target/)"
-    );
+    let out_off = cmd()
+        .arg(root)
+        .arg("-g").arg("off").arg("-s")
+        .output().unwrap();
+    assert!(out_off.status.success());
+    let n_off: usize = String::from_utf8_lossy(&out_off.stdout).trim().parse().unwrap();
+
+    assert!(n_off > n_on, "gitignore=off should count more tokens than gitignore=on");
 }
 
 // ── 7. -m glob filters to matching files ────────────────────────────────────
