@@ -1,6 +1,6 @@
 [package]
 name = "ctoken"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 description = "Count tokens in project files, like cloc but for LLM context estimation"
 license = "Apache-2.0"
