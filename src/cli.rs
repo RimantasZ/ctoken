@@ -6,8 +6,11 @@ use crate::error::{CtokenError, Result};
 #[derive(Parser, Debug)]
 #[command(name = "ctoken", version, about = "Count tokens in project files")]
 pub struct Cli {
-    /// Path to a file or directory to tokenize
-    pub path: PathBuf,
+    /// Path to a file or directory to tokenize. Omit to read from stdin
+    /// (pipe data, or type/paste and press Ctrl+D to finish).
+    /// Use '-' to read stdin explicitly when combining with flags.
+    #[arg(value_name = "PATH")]
+    pub path: Option<PathBuf>,
 
     /// Group by file extension instead of by subdirectory
     #[arg(short = 't', long = "type")]

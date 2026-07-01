@@ -226,11 +226,13 @@ fn verbose_one_line_per_file() {
     }
 }
 
-// ── 12. Missing path argument → exit 2 ──────────────────────────────────────
+// ── 12. No path arg + piped empty stdin → exits 0, prints 0 ─────────────────
 
 #[test]
-fn no_path_arg_exits_2() {
-    cmd().assert().failure().code(2);
+fn no_path_arg_piped_empty_stdin_exits_0() {
+    let output = cmd().write_stdin("").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
 }
 
 // ── 13. Unknown encoding → exit 2 ────────────────────────────────────────────
@@ -346,4 +348,129 @@ fn recursive_with_dir_mode() {
         .success()
         .stdout(predicate::str::contains("==="))
         .stdout(predicate::str::contains("GRAND TOTAL"));
+}
+
+// ── 21. Stdin: pipe text → bare integer token count ──────────────────────────
+
+#[test]
+fn stdin_pipe_text_counts_tokens() {
+    let output = cmd().write_stdin("hello world").output().unwrap();
+    assert!(output.status.success());
+    let n: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdin output must be a bare integer");
+    assert!(n > 0);
+}
+
+// ── 22. Stdin: explicit '-' argument ─────────────────────────────────────────
+
+#[test]
+fn stdin_explicit_dash_argument() {
+    let output = cmd()
+        .arg("-")
+        .write_stdin("hello world")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let n: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("output should be an integer");
+    assert!(n > 0);
+}
+
+// ── 23. Stdin + --json → {"path": "<stdin>", "tokens": N} ───────────────────
+
+#[test]
+fn stdin_json_shape() {
+    let output = cmd()
+        .write_stdin("hello world")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("should be valid JSON");
+    assert_eq!(v["path"].as_str().unwrap(), "<stdin>");
+    assert!(v["tokens"].as_u64().unwrap() > 0);
+}
+
+// ── 24. Stdin: binary bytes → 0 tokens, exits 0 ──────────────────────────────
+
+#[test]
+fn stdin_binary_content_outputs_zero() {
+    let output = cmd()
+        .write_stdin(b"some\x00binary\x00content".as_ref())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let n: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("binary stdin still outputs integer");
+    assert_eq!(n, 0);
+}
+
+// ── 25. Stdin: binary + --json → {"path": "<stdin>", "tokens": 0} ───────────
+
+#[test]
+fn stdin_binary_json_zero() {
+    let output = cmd()
+        .write_stdin(b"binary\x00data".as_ref())
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(v["path"].as_str().unwrap(), "<stdin>");
+    assert_eq!(v["tokens"].as_u64().unwrap(), 0);
+}
+
+// ── 26. Stdin: non-UTF-8 bytes (not binary) → 0 tokens, warning on stderr ───
+
+#[test]
+fn stdin_invalid_utf8_outputs_zero_with_warning() {
+    let bad_utf8: &[u8] = &[0xc3, 0x28]; // invalid 2-byte UTF-8 sequence, no NUL
+    let output = cmd().write_stdin(bad_utf8).output().unwrap();
+    assert!(output.status.success());
+    let n: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("invalid UTF-8 stdin still outputs integer");
+    assert_eq!(n, 0);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid UTF-8"),
+        "should warn about invalid UTF-8 on stderr"
+    );
+}
+
+// ── 27. Stdin + --verbose → label is "<stdin>" ───────────────────────────────
+
+#[test]
+fn stdin_verbose_labels_stdin() {
+    cmd()
+        .write_stdin("hello world")
+        .arg("--verbose")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("<stdin>"));
+}
+
+// ── 28. Stdin + -t (dir-only flag) silently ignored ──────────────────────────
+
+#[test]
+fn stdin_ignores_type_flag() {
+    let output = cmd()
+        .write_stdin("hello world")
+        .arg("-t")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    // Still outputs a bare integer, not a table
+    let _n: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("stdin with -t still outputs integer");
 }

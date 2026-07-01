@@ -11,7 +11,7 @@ mod tokenize_files;
 mod walk;
 
 use clap::Parser;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 
 use cli::Cli;
 use error::{CtokenError, Result};
@@ -79,7 +79,18 @@ fn run() -> Result<()> {
 
     let tokenizer = Tokenizer::new(&cli.encoding)?;
 
-    match path::classify(&cli.path)? {
+    let use_stdin = match &cli.path {
+        None => true,
+        Some(p) if p == std::path::Path::new("-") => true,
+        Some(_) => false,
+    };
+
+    if use_stdin {
+        return run_stdin(&cli, &tokenizer);
+    }
+
+    let path = cli.path.as_ref().unwrap();
+    match path::classify(path)? {
         Target::File(abs) => run_single_file(&cli, &abs, &tokenizer),
         Target::Dir(abs) => run_directory(&cli, &abs, &tokenizer, profile),
     }
@@ -123,6 +134,53 @@ fn run_single_file(cli: &Cli, abs: &std::path::Path, tokenizer: &Tokenizer) -> R
 
     if cli.json {
         let v = output::json::single_file_json(abs, token_count);
+        println!("{}", serde_json::to_string(&v).unwrap());
+    } else {
+        println!("{}", token_count);
+    }
+
+    Ok(())
+}
+
+fn run_stdin(cli: &Cli, tokenizer: &Tokenizer) -> Result<()> {
+    if io::stdin().is_terminal() {
+        eprintln!("Reading from stdin (press Ctrl+D when done)...");
+    }
+
+    let mut bytes = Vec::new();
+    io::stdin()
+        .lock()
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("cannot read stdin: {}", e))?;
+
+    let is_bin = binary::is_binary_content(&bytes);
+    let stdin_path = std::path::Path::new("<stdin>");
+
+    let token_count = if is_bin {
+        0
+    } else {
+        match String::from_utf8(bytes) {
+            Ok(text) => tokenizer.count(&text),
+            Err(_) => {
+                eprintln!("warning: stdin contains invalid UTF-8, skipping");
+                0
+            }
+        }
+    };
+
+    if cli.verbose {
+        if is_bin {
+            println!("{}", format::fmt_verbose_line(stdin_path, &Outcome::Binary));
+        } else {
+            println!(
+                "{}",
+                format::fmt_verbose_line(stdin_path, &Outcome::Tokens(token_count))
+            );
+        }
+    }
+
+    if cli.json {
+        let v = output::json::single_file_json(stdin_path, token_count);
         println!("{}", serde_json::to_string(&v).unwrap());
     } else {
         println!("{}", token_count);
