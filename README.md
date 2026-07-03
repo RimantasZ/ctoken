@@ -94,6 +94,33 @@ ctoken src/main.rs
 ctoken . -v
 ```
 
+## Stdin and pipe usage
+
+ctoken can read from stdin when no path is given, making it easy to use in pipelines or with ad-hoc input.
+
+```bash
+# Pipe a file through ctoken
+cat myfile.txt | ctoken
+
+# Use as a step in a pipeline — output is a bare integer
+cat myfile.txt | ctoken | xargs -I{} echo "Token count: {}"
+
+# Count tokens from a command's output (e.g. git diff)
+git diff HEAD~1 | ctoken
+
+# Combine with other flags
+cat myfile.txt | ctoken --json
+cat myfile.txt | ctoken --encoding cl100k_base
+
+# Use '-' to read stdin explicitly (useful when mixing with other flags)
+ctoken - --json < myfile.txt
+
+# Interactive mode: run with no arguments, type or paste text, press Ctrl+D when done
+ctoken
+```
+
+When stdin is a terminal (interactive mode), ctoken prints a brief prompt to stderr and waits for input. The token count is printed to stdout once you signal end-of-input with Ctrl+D. All other flags (`--json`, `--encoding`, `--verbose`) work the same way in stdin mode.
+
 ## Flags
 
 | Short | Long | Arg | Description |
